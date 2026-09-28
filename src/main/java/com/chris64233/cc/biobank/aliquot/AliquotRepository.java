@@ -12,7 +12,13 @@ public interface AliquotRepository extends JpaRepository<Aliquot, Long> {
 
     List<Aliquot> findBySampleIdOrderByIdAsc(Long sampleId);
 
+    List<Aliquot> findBySubjectIdOrderByIdAsc(Long subjectId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Aliquot a where a.id in :ids order by a.id asc")
     List<Aliquot> findAllByIdForUpdate(@Param("ids") Collection<Long> ids);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from Aliquot a where a.subjectId = :subjectId order by a.id asc")
+    List<Aliquot> findBySubjectIdForUpdate(@Param("subjectId") Long subjectId);
 }

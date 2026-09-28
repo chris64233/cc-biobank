@@ -15,35 +15,34 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class IssueApiTests extends AbstractApiTest {
 
-    private String issueBody(String key, long aliquotId, String volume) {
-        return """
-                {"idempotencyKey":"%s","items":[{"aliquotId":%d,"volume":%s}]}
-                """.formatted(key, aliquotId, volume);
-    }
-
     @Test
     void issueFromMultipleAliquots() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        String code = createSubjectWithConsent();
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
         List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30,20]}");
         String body = """
-                {"idempotencyKey":"%s","items":[
+                {"idempotencyKey":"%s","subjectCode":"%s","purpose":"%s","consentVersion":"v1",
+                 "items":[
                   {"aliquotId":%d,"volume":10},{"aliquotId":%d,"volume":5}]}
-                """.formatted(UUID.randomUUID(), ids.get(0), ids.get(1));
+                """.formatted(UUID.randomUUID(), code, PURPOSE_USE, ids.get(0), ids.get(1));
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(2))
                 .andExpect(jsonPath("$.items[0].remainingVolume").value(20.0))
                 .andExpect(jsonPath("$.items[1].remainingVolume").value(15.0))
-                .andExpect(jsonPath("$.items[0].status").value("AVAILABLE"));
+                .andExpect(jsonPath("$.items[0].status").value("AVAILABLE"))
+                .andExpect(jsonPath("$.consentSnapshot.version").value("v1"))
+                .andExpect(jsonPath("$.consentSnapshot.purpose").value(PURPOSE_USE));
     }
 
     @Test
     void replaySameKeyAndContentReturnsOriginalResult() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        String code = createSubjectWithConsent();
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
         List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30]}");
         String key = UUID.randomUUID().toString();
-        String body = issueBody(key, ids.get(0), "10");
+        String body = issueBody(key, code, PURPOSE_USE, CONSENT_V1, ids.get(0), "10");
 
         MvcResult first = mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
@@ -64,29 +63,32 @@ class IssueApiTests extends AbstractApiTest {
 
     @Test
     void sameKeyWithDifferentContentReturnsConflict() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        String code = createSubjectWithConsent();
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
         List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30]}");
         String key = UUID.randomUUID().toString();
 
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(issueBody(key, ids.get(0), "10")))
+                        .content(issueBody(key, code, PURPOSE_USE, CONSENT_V1, ids.get(0), "10")))
                 .andExpect(status().isOk());
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(issueBody(key, ids.get(0), "5")))
+                        .content(issueBody(key, code, PURPOSE_USE, CONSENT_V1, ids.get(0), "5")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"));
     }
 
     @Test
     void issueInsufficientStockLeavesNoTrace() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        String code = createSubjectWithConsent();
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
         List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30]}");
 
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(issueBody(UUID.randomUUID().toString(), ids.get(0), "31")))
+                        .content(issueBody(UUID.randomUUID().toString(), code, PURPOSE_USE,
+                                CONSENT_V1, ids.get(0), "31")))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("INSUFFICIENT_STOCK"));
 
@@ -99,12 +101,14 @@ class IssueApiTests extends AbstractApiTest {
 
     @Test
     void depletedAliquotCannotBeIssuedAgain() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        String code = createSubjectWithConsent();
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
         List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30]}");
 
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(issueBody(UUID.randomUUID().toString(), ids.get(0), "30")))
+                        .content(issueBody(UUID.randomUUID().toString(), code, PURPOSE_USE,
+                                CONSENT_V1, ids.get(0), "30")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].remainingVolume").value(0.0))
                 .andExpect(jsonPath("$.items[0].status").value("DEPLETED"));
@@ -114,37 +118,76 @@ class IssueApiTests extends AbstractApiTest {
 
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(issueBody(UUID.randomUUID().toString(), ids.get(0), "1")))
+                        .content(issueBody(UUID.randomUUID().toString(), code, PURPOSE_USE,
+                                CONSENT_V1, ids.get(0), "1")))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value("INSUFFICIENT_STOCK"));
     }
 
     @Test
     void issueMissingAliquotReturnsNotFound() throws Exception {
+        String code = createSubjectWithConsent();
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(issueBody(UUID.randomUUID().toString(), 999999999L, "1")))
+                        .content(issueBody(UUID.randomUUID().toString(), code, PURPOSE_USE,
+                                CONSENT_V1, 999999999L, "1")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
     @Test
     void issueRejectsNonPositiveVolume() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        String code = createSubjectWithConsent();
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
         List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30]}");
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(issueBody(UUID.randomUUID().toString(), ids.get(0), "0")))
+                        .content(issueBody(UUID.randomUUID().toString(), code, PURPOSE_USE,
+                                CONSENT_V1, ids.get(0), "0")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     @Test
     void issueRejectsEmptyItems() throws Exception {
+        String body = """
+                {"idempotencyKey":"k","subjectCode":"x","purpose":"p",
+                 "consentVersion":"v1","items":[]}
+                """;
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"idempotencyKey\":\"k\",\"items\":[]}"))
+                        .content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void issueRejectsPurposeMismatch() throws Exception {
+        // 同意仅允许研究保藏，不允许本次领用用途。
+        String code = createSubjectWithConsent(CONSENT_V1, "[\"" + PURPOSE_STORAGE + "\"]");
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
+        List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30]}");
+
+        mockMvc.perform(post("/api/issues")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(issueBody(UUID.randomUUID().toString(), code, PURPOSE_USE,
+                                CONSENT_V1, ids.get(0), "10")))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("CONSENT_NOT_VALID"));
+    }
+
+    @Test
+    void issueAcrossSubjectsRejected() throws Exception {
+        String codeA = createSubjectWithConsent();
+        long sampleA = receiveSample(uniqueExternalId(), codeA, CONSENT_V1, "100", "10");
+        List<Long> idsA = createAliquots(sampleA, "{\"volumes\":[30]}");
+        String codeB = createSubjectWithConsent();
+
+        // 用受试者 B 的同意去领用受试者 A 的分装。
+        mockMvc.perform(post("/api/issues")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(issueBody(UUID.randomUUID().toString(), codeB, PURPOSE_USE,
+                                CONSENT_V1, idsA.get(0), "10")))
+                .andExpect(status().isBadRequest());
     }
 }

@@ -16,14 +16,18 @@ class LineageApiTests extends AbstractApiTest {
 
     @Test
     void lineageContainsOrderedEventsAndCurrentVolumes() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        String code = createSubjectWithConsent();
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
         List<Long> ids = createAliquots(sampleId,
                 "{\"volumes\":[30,20],\"lossVolume\":5}");
+        String issueBody = """
+                {"idempotencyKey":"%s","subjectCode":"%s","purpose":"RESEARCH_USE",
+                 "consentVersion":"v1",
+                 "items":[{"aliquotId":%d,"volume":12}]}
+                """.formatted(UUID.randomUUID(), code, ids.get(0));
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"idempotencyKey":"%s","items":[{"aliquotId":%d,"volume":12}]}
-                                """.formatted(UUID.randomUUID(), ids.get(0))))
+                        .content(issueBody))
                 .andExpect(status().isOk());
 
         MvcResult result = mockMvc.perform(get("/api/samples/{id}/lineage", sampleId))
@@ -55,7 +59,8 @@ class LineageApiTests extends AbstractApiTest {
 
     @Test
     void failedIssueWritesNoEvents() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        String code = createSubjectWithConsent();
+        long sampleId = receiveSample(uniqueExternalId(), code, CONSENT_V1, "100", "10");
         List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30]}");
 
         MvcResult before = mockMvc.perform(get("/api/samples/{id}/events", sampleId))
@@ -63,11 +68,14 @@ class LineageApiTests extends AbstractApiTest {
                 .andReturn();
         int eventCount = readTree(before).size();
 
+        String issueBody = """
+                {"idempotencyKey":"%s","subjectCode":"%s","purpose":"RESEARCH_USE",
+                 "consentVersion":"v1",
+                 "items":[{"aliquotId":%d,"volume":99}]}
+                """.formatted(UUID.randomUUID(), code, ids.get(0));
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"idempotencyKey":"%s","items":[{"aliquotId":%d,"volume":99}]}
-                                """.formatted(UUID.randomUUID(), ids.get(0))))
+                        .content(issueBody))
                 .andExpect(status().isUnprocessableEntity());
 
         MvcResult after = mockMvc.perform(get("/api/samples/{id}/events", sampleId))

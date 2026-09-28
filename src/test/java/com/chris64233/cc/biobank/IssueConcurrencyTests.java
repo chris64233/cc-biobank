@@ -2,8 +2,11 @@ package com.chris64233.cc.biobank;
 
 import com.chris64233.cc.biobank.aliquot.Aliquot;
 import com.chris64233.cc.biobank.aliquot.AliquotRepository;
+import com.chris64233.cc.biobank.aliquot.AliquotStatus;
 import com.chris64233.cc.biobank.common.ApiException;
 import com.chris64233.cc.biobank.common.ErrorCode;
+import com.chris64233.cc.biobank.consent.Subject;
+import com.chris64233.cc.biobank.consent.SubjectRepository;
 import com.chris64233.cc.biobank.issue.IssueService;
 import com.chris64233.cc.biobank.issue.dto.IssueRequest;
 import com.chris64233.cc.biobank.issue.dto.IssueResponse;
@@ -11,6 +14,7 @@ import com.chris64233.cc.biobank.sample.Sample;
 import com.chris64233.cc.biobank.sample.SampleService;
 import com.chris64233.cc.biobank.sample.dto.ReceiveSampleRequest;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -37,17 +41,35 @@ class IssueConcurrencyTests {
     private AliquotRepository aliquotRepository;
 
     @Autowired
+    private SubjectRepository subjectRepository;
+
+    @Autowired
     private com.chris64233.cc.biobank.aliquot.AliquotService aliquotService;
 
-    @Test
-    void concurrentIssuesNeverGoNegativeOrLoseUpdates() throws Exception {
+    @Autowired
+    private com.chris64233.cc.biobank.consent.ConsentVersionRepository consentRepo;
+
+    private SampleFixture setup(String purposes) {
+        String code = "SUBJ-" + UUID.randomUUID();
+        Subject subject = new com.chris64233.cc.biobank.consent.Subject(code);
+        subject = subjectRepository.save(subject);
+        consentRepo.save(new com.chris64233.cc.biobank.consent.ConsentVersion(subject, "v1",
+                purposes, Instant.now().minusSeconds(60), null));
         Sample sample = sampleService.receive(new ReceiveSampleRequest(
-                "EXT-" + UUID.randomUUID(), "BLOOD", new BigDecimal("100"),
+                "EXT-" + UUID.randomUUID(), code, "v1", "BLOOD", new BigDecimal("100"),
                 BigDecimal.ZERO, "FRIDGE-C3", null));
         var created = aliquotService.createAliquots(sample.getId(),
                 new com.chris64233.cc.biobank.aliquot.dto.CreateAliquotsRequest(
                         null, null, List.of(new BigDecimal("100")), null));
-        Long aliquotId = created.aliquots().get(0).id();
+        return new SampleFixture(subject, created.aliquots().get(0).id());
+    }
+
+    private record SampleFixture(Subject subject, Long aliquotId) {
+    }
+
+    @Test
+    void concurrentIssuesNeverGoNegativeOrLoseUpdates() throws Exception {
+        SampleFixture fixture = setup("RESEARCH_STORAGE,RESEARCH_USE");
 
         int threads = 10;
         BigDecimal volumePerIssue = new BigDecimal("15");
@@ -63,7 +85,8 @@ class IssueConcurrencyTests {
                 try {
                     start.await();
                     IssueRequest request = new IssueRequest(UUID.randomUUID().toString(),
-                            List.of(new IssueRequest.Item(aliquotId, volumePerIssue)));
+                            fixture.subject().getSubjectCode(), "RESEARCH_USE", "v1",
+                            List.of(new IssueRequest.Item(fixture.aliquotId(), volumePerIssue)));
                     successes.add(issueService.issue(request));
                 } catch (ApiException ex) {
                     failures.add(ex);
@@ -81,8 +104,8 @@ class IssueConcurrencyTests {
         assertThat(failures).hasSize(4);
         assertThat(failures).allMatch(ex -> ex.code() == ErrorCode.INSUFFICIENT_STOCK);
 
-        Aliquot aliquot = aliquotRepository.findById(aliquotId).orElseThrow();
+        Aliquot aliquot = aliquotRepository.findById(fixture.aliquotId()).orElseThrow();
         assertThat(aliquot.getRemainingVolume()).isEqualByComparingTo("10.000");
-        assertThat(aliquot.getRemainingVolume().signum()).isGreaterThanOrEqualTo(0);
+        assertThat(aliquot.getStatus()).isEqualTo(AliquotStatus.AVAILABLE);
     }
 }
