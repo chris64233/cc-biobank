@@ -13,29 +13,36 @@ class SampleApiTests extends AbstractApiTest {
 
     @Test
     void receiveSuccess() throws Exception {
+        SubjectSetup subject = setupSubject();
         String externalId = uniqueExternalId();
         String body = """
-                {"externalId":"%s","sampleType":"PLASMA","initialVolume":100,
+                {"subjectCode":"%s","consentVersionCode":"%s","externalId":"%s",
+                 "sampleType":"PLASMA","initialVolume":100,
                  "reservedVolume":10,"storageLocation":"FRIDGE-A1"}
-                """.formatted(externalId);
+                """.formatted(subject.code(), subject.consentVersion(), externalId);
         mockMvc.perform(post("/api/samples")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.subjectCode").value(subject.code()))
+                .andExpect(jsonPath("$.consentVersionCode").value(subject.consentVersion()))
                 .andExpect(jsonPath("$.externalId").value(externalId))
                 .andExpect(jsonPath("$.sampleType").value("PLASMA"))
                 .andExpect(jsonPath("$.initialVolume").value(100.0))
                 .andExpect(jsonPath("$.reservedVolume").value(10.0))
                 .andExpect(jsonPath("$.remainingVolume").value(100.0))
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.storageLocation").value("FRIDGE-A1"))
                 .andExpect(jsonPath("$.receivedAt", notNullValue()));
     }
 
     @Test
     void receiveRejectsNonPositiveInitialVolume() throws Exception {
+        SubjectSetup subject = setupSubject();
         String body = """
-                {"externalId":"%s","sampleType":"PLASMA","initialVolume":0,
+                {"subjectCode":"%s","consentVersionCode":"%s","externalId":"%s",
+                 "sampleType":"PLASMA","initialVolume":0,
                  "reservedVolume":0,"storageLocation":"FRIDGE-A1"}
-                """.formatted(uniqueExternalId());
+                """.formatted(subject.code(), subject.consentVersion(), uniqueExternalId());
         mockMvc.perform(post("/api/samples")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
@@ -44,10 +51,12 @@ class SampleApiTests extends AbstractApiTest {
 
     @Test
     void receiveRejectsNegativeReservedVolume() throws Exception {
+        SubjectSetup subject = setupSubject();
         String body = """
-                {"externalId":"%s","sampleType":"PLASMA","initialVolume":100,
+                {"subjectCode":"%s","consentVersionCode":"%s","externalId":"%s",
+                 "sampleType":"PLASMA","initialVolume":100,
                  "reservedVolume":-1,"storageLocation":"FRIDGE-A1"}
-                """.formatted(uniqueExternalId());
+                """.formatted(subject.code(), subject.consentVersion(), uniqueExternalId());
         mockMvc.perform(post("/api/samples")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
@@ -56,10 +65,12 @@ class SampleApiTests extends AbstractApiTest {
 
     @Test
     void receiveRejectsReservedVolumeNotLessThanInitial() throws Exception {
+        SubjectSetup subject = setupSubject();
         String body = """
-                {"externalId":"%s","sampleType":"PLASMA","initialVolume":100,
+                {"subjectCode":"%s","consentVersionCode":"%s","externalId":"%s",
+                 "sampleType":"PLASMA","initialVolume":100,
                  "reservedVolume":100,"storageLocation":"FRIDGE-A1"}
-                """.formatted(uniqueExternalId());
+                """.formatted(subject.code(), subject.consentVersion(), uniqueExternalId());
         mockMvc.perform(post("/api/samples")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
@@ -68,12 +79,14 @@ class SampleApiTests extends AbstractApiTest {
 
     @Test
     void receiveRejectsDuplicateExternalId() throws Exception {
+        SubjectSetup subject = setupSubject();
         String externalId = uniqueExternalId();
-        receiveSample(externalId, "100", "10");
+        receiveSample(subject, externalId, "100", "10");
         String body = """
-                {"externalId":"%s","sampleType":"PLASMA","initialVolume":50,
+                {"subjectCode":"%s","consentVersionCode":"%s","externalId":"%s",
+                 "sampleType":"PLASMA","initialVolume":50,
                  "reservedVolume":5,"storageLocation":"FRIDGE-B2"}
-                """.formatted(externalId);
+                """.formatted(subject.code(), subject.consentVersion(), externalId);
         mockMvc.perform(post("/api/samples")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isConflict())
@@ -89,6 +102,8 @@ class SampleApiTests extends AbstractApiTest {
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details.subjectCode", notNullValue()))
+                .andExpect(jsonPath("$.details.consentVersionCode", notNullValue()))
                 .andExpect(jsonPath("$.details.externalId", notNullValue()))
                 .andExpect(jsonPath("$.details.storageLocation", notNullValue()));
     }

@@ -7,6 +7,9 @@ import java.util.List;
 
 public record IssueResponse(
         String idempotencyKey,
+        String subjectCode,
+        String consentVersionCode,
+        String purpose,
         List<Item> items,
         Instant issuedAt) {
 

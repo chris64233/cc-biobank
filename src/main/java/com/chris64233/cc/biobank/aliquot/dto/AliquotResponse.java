@@ -8,6 +8,8 @@ import java.time.Instant;
 public record AliquotResponse(
         Long id,
         Long sampleId,
+        String subjectCode,
+        String consentVersionCode,
         BigDecimal initialVolume,
         BigDecimal remainingVolume,
         AliquotStatus status,
@@ -15,6 +17,8 @@ public record AliquotResponse(
 
     public static AliquotResponse from(Aliquot aliquot) {
         return new AliquotResponse(aliquot.getId(), aliquot.getSample().getId(),
+                aliquot.getSample().getSubject().getSubjectCode(),
+                aliquot.getConsentVersionCode(),
                 aliquot.getInitialVolume(), aliquot.getRemainingVolume(),
                 aliquot.getStatus(), aliquot.getCreatedAt());
     }

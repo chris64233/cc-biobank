@@ -7,6 +7,9 @@ import com.chris64233.cc.biobank.event.EventType;
 import com.chris64233.cc.biobank.event.SampleEvent;
 import com.chris64233.cc.biobank.event.SampleEventRepository;
 import com.chris64233.cc.biobank.sample.dto.ReceiveSampleRequest;
+import com.chris64233.cc.biobank.subject.Consent;
+import com.chris64233.cc.biobank.subject.Subject;
+import com.chris64233.cc.biobank.subject.SubjectService;
 import java.math.BigDecimal;
 import java.time.Instant;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -18,10 +21,13 @@ public class SampleService {
 
     private final SampleRepository sampleRepository;
     private final SampleEventRepository eventRepository;
+    private final SubjectService subjectService;
 
-    public SampleService(SampleRepository sampleRepository, SampleEventRepository eventRepository) {
+    public SampleService(SampleRepository sampleRepository, SampleEventRepository eventRepository,
+            SubjectService subjectService) {
         this.sampleRepository = sampleRepository;
         this.eventRepository = eventRepository;
+        this.subjectService = subjectService;
     }
 
     @Transactional
@@ -43,9 +49,16 @@ public class SampleService {
                     "外部样本号已存在: " + request.externalId());
         }
 
+        Subject subject = subjectService.getByCode(request.subjectCode());
         Instant receivedAt = request.receivedAt() != null ? request.receivedAt() : Instant.now();
-        Sample sample = new Sample(request.externalId(), request.sampleType(), initialVolume,
-                reservedVolume, request.storageLocation(), receivedAt);
+        // 接收时必须采用一个当前有效的同意版本，版本号随后被固化到样本谱系。
+        Consent consent =
+                subjectService.resolveConsentForReceipt(subject, request.consentVersionCode(),
+                        receivedAt);
+
+        Sample sample = new Sample(subject, consent.getVersionCode(), request.externalId(),
+                request.sampleType(), initialVolume, reservedVolume, request.storageLocation(),
+                receivedAt);
         try {
             sample = sampleRepository.saveAndFlush(sample);
         } catch (DataIntegrityViolationException ex) {
@@ -55,7 +68,9 @@ public class SampleService {
 
         eventRepository.save(new SampleEvent(EventType.SAMPLE_RECEIVED, sample.getId(), null,
                 initialVolume, sample.getRemainingVolume(),
-                "外部样本号=" + sample.getExternalId()));
+                "外部样本号=" + sample.getExternalId()
+                        + ", 受试者=" + subject.getSubjectCode()
+                        + ", 同意版本=" + consent.getVersionCode()));
         return sample;
     }
 

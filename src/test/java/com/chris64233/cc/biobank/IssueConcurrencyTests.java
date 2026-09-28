@@ -10,6 +10,8 @@ import com.chris64233.cc.biobank.issue.dto.IssueResponse;
 import com.chris64233.cc.biobank.sample.Sample;
 import com.chris64233.cc.biobank.sample.SampleService;
 import com.chris64233.cc.biobank.sample.dto.ReceiveSampleRequest;
+import com.chris64233.cc.biobank.subject.Consent;
+import com.chris64233.cc.biobank.subject.Subject;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
@@ -37,12 +39,23 @@ class IssueConcurrencyTests {
     private AliquotRepository aliquotRepository;
 
     @Autowired
+    private com.chris64233.cc.biobank.subject.SubjectRepository subjectRepository;
+
+    @Autowired
+    private com.chris64233.cc.biobank.subject.ConsentRepository consentRepository;
+
+    @Autowired
     private com.chris64233.cc.biobank.aliquot.AliquotService aliquotService;
 
     @Test
     void concurrentIssuesNeverGoNegativeOrLoseUpdates() throws Exception {
+        String subjectCode = "SUBJ-" + UUID.randomUUID();
+        subjectRepository.save(new Subject(subjectCode));
+        consentRepository.save(new Consent(subjectRepository.findBySubjectCode(subjectCode)
+                .orElseThrow(), "v1", new java.util.HashSet<>(java.util.List.of("RESEARCH")),
+                java.time.Instant.now().minusSeconds(3600), null));
         Sample sample = sampleService.receive(new ReceiveSampleRequest(
-                "EXT-" + UUID.randomUUID(), "BLOOD", new BigDecimal("100"),
+                subjectCode, "v1", "EXT-" + UUID.randomUUID(), "BLOOD", new BigDecimal("100"),
                 BigDecimal.ZERO, "FRIDGE-C3", null));
         var created = aliquotService.createAliquots(sample.getId(),
                 new com.chris64233.cc.biobank.aliquot.dto.CreateAliquotsRequest(
@@ -63,6 +76,7 @@ class IssueConcurrencyTests {
                 try {
                     start.await();
                     IssueRequest request = new IssueRequest(UUID.randomUUID().toString(),
+                            subjectCode, "v1", "RESEARCH",
                             List.of(new IssueRequest.Item(aliquotId, volumePerIssue)));
                     successes.add(issueService.issue(request));
                 } catch (ApiException ex) {

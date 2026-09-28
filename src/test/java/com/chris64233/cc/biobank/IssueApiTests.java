@@ -15,23 +15,23 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class IssueApiTests extends AbstractApiTest {
 
-    private String issueBody(String key, long aliquotId, String volume) {
-        return """
-                {"idempotencyKey":"%s","items":[{"aliquotId":%d,"volume":%s}]}
-                """.formatted(key, aliquotId, volume);
-    }
-
     @Test
     void issueFromMultipleAliquots() throws Exception {
-        long sampleId = receiveSample(uniqueExternalId(), "100", "10");
+        SubjectSetup subject = setupSubject();
+        long sampleId = receiveSample(subject, uniqueExternalId(), "100", "10");
         List<Long> ids = createAliquots(sampleId, "{\"volumes\":[30,20]}");
         String body = """
-                {"idempotencyKey":"%s","items":[
+                {"idempotencyKey":"%s","subjectCode":"%s","consentVersionCode":"%s",
+                 "purpose":"%s","items":[
                   {"aliquotId":%d,"volume":10},{"aliquotId":%d,"volume":5}]}
-                """.formatted(UUID.randomUUID(), ids.get(0), ids.get(1));
+                """.formatted(UUID.randomUUID(), subject.code(), subject.consentVersion(),
+                PURPOSE_RESEARCH, ids.get(0), ids.get(1));
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subjectCode").value(subject.code()))
+                .andExpect(jsonPath("$.consentVersionCode").value(subject.consentVersion()))
+                .andExpect(jsonPath("$.purpose").value(PURPOSE_RESEARCH))
                 .andExpect(jsonPath("$.items.length()").value(2))
                 .andExpect(jsonPath("$.items[0].remainingVolume").value(20.0))
                 .andExpect(jsonPath("$.items[1].remainingVolume").value(15.0))
@@ -121,9 +121,10 @@ class IssueApiTests extends AbstractApiTest {
 
     @Test
     void issueMissingAliquotReturnsNotFound() throws Exception {
+        SubjectSetup subject = setupSubject();
         mockMvc.perform(post("/api/issues")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(issueBody(UUID.randomUUID().toString(), 999999999L, "1")))
+                        .content(issueBody(UUID.randomUUID().toString(), subject, 999999999L, "1")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }

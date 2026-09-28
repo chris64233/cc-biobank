@@ -1,6 +1,7 @@
 package com.chris64233.cc.biobank.aliquot;
 
 import com.chris64233.cc.biobank.common.ApiException;
+import com.chris64233.cc.biobank.common.ErrorCode;
 import com.chris64233.cc.biobank.common.VolumeMath;
 import com.chris64233.cc.biobank.aliquot.dto.AliquotResponse;
 import com.chris64233.cc.biobank.aliquot.dto.CreateAliquotsRequest;
@@ -10,6 +11,7 @@ import com.chris64233.cc.biobank.event.SampleEvent;
 import com.chris64233.cc.biobank.event.SampleEventRepository;
 import com.chris64233.cc.biobank.sample.Sample;
 import com.chris64233.cc.biobank.sample.SampleRepository;
+import com.chris64233.cc.biobank.sample.SampleStatus;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -37,6 +39,10 @@ public class AliquotService {
     public CreateAliquotsResponse createAliquots(Long sampleId, CreateAliquotsRequest request) {
         Sample sample = sampleRepository.findByIdForUpdate(sampleId)
                 .orElseThrow(() -> ApiException.notFound("样本不存在: " + sampleId));
+        if (sample.getStatus() == SampleStatus.FROZEN) {
+            throw new ApiException(ErrorCode.SAMPLE_NOT_DISPOSABLE,
+                    "样本已随同意撤回冻结，不可再分装: " + sampleId);
+        }
 
         List<BigDecimal> volumes = resolveVolumes(request);
         BigDecimal loss = VolumeMath.normalize(
